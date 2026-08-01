@@ -23,12 +23,14 @@ const client = new Client({
 const PREFIX = '!';
 const TOKEN = process.env.DISCORD_TOKEN;
 
-// ডিসকর্ড প্লেয়ার সেটআপ
+// ডিসকрд প্লেয়ার সেটআপ
 const player = new Player(client);
-player.extractors.loadDefault(); // সব ধরনের মিউজিক সোর্স এক্সট্রাক্ট করার জন্য
 
 client.once('ready', async () => {
     console.log(`✅ ${client.user.tag} অনলাইন হয়েছে!`);
+    
+    // ইউটিউব এক্সট্রাক্টর লোড করা
+    await player.extractors.loadDefault();
     
     // স্ল্যাশ কমান্ড রেজিস্ট্রেশন
     const commands = [
@@ -46,6 +48,15 @@ client.once('ready', async () => {
     } catch (error) {
         console.error(error);
     }
+});
+
+// 🛠️ গুরুত্বপূর্ণ এরর লিসেনার (এটি যুক্ত করার কারণে বট আর ক্র্যাশ করবে না)
+player.events.on('error', (queue, error) => {
+    console.log(`[Player Error] ${error.message}`);
+});
+
+player.events.on('playerError', (queue, error) => {
+    console.log(`[Player Connection Error] ${error.message}`);
 });
 
 // মিউজিক ইভেন্ট হ্যান্ডলার (গান শুরু হলে লারা বটের মতো এম্বেড মেসেজ দেবে)
@@ -70,14 +81,17 @@ async function handlePlay(context, songName, isSlash = false) {
     try {
         const { queue, track } = await player.play(voiceChannel, songName, {
             nodeOptions: {
-                metadata: { channel: context.channel }
+                metadata: { channel: context.channel },
+                leaveOnEmpty: true,
+                leaveOnEnd: false,
+                volume: 80
             }
         });
 
         const msg = `✅ **${track.title}** কিউতে যোগ করা হয়েছে!`;
         if (isSlash) await context.editReply(msg);
     } catch (e) {
-        console.error(e);
+        console.error("Play Error Catch:", e);
         if (isSlash) await context.editReply('❌ গানটি চালাতে সমস্যা হয়েছে!');
         else await context.channel.send('❌ গানটি চালাতে সমস্যা হয়েছে!');
     }
