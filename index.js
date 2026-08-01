@@ -1,4 +1,16 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const express = require('express');
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('✅ লারা মিউজিক বট সফলভাবে রান করছে!');
+});
+
+app.listen(port, () => {
+  console.log(`Web server is running on port ${port}`);
+});
+
+// এর নিচ থেকে আপনার বটের বাকি কোড (Client, play-dl ইত্যাদি) শুরু হবে... { Client, GatewayIntentBits } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const play = require('play-dl');
 require('dotenv').config();
