@@ -3,7 +3,7 @@ const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => res.send('Lara Bot is Live!'));
+app.get('/', (req, res) => res.send('Lara Bot is Live via SoundCloud!'));
 app.listen(port, '0.0.0.0', () => console.log(`Web server active on port ${port}`));
 
 // ২. মডিউল ইমপোর্ট
@@ -37,13 +37,14 @@ player.events.on('playerError', (queue, error) => {
 // মিউজিক ইভেন্ট হ্যান্ডলার (গান শুরু হলে সুন্দর মেসেজ বক্স দেবে)
 player.events.on('playerStart', (queue, track) => {
     const embed = new EmbedBuilder()
-        .setColor('#00ffcc')
-        .setDescription(`🎶 এখন প্লে হচ্ছে: **[${track.title}](${track.url})**\n💿 সোর্স: *${track.requestedBy ? 'Spotify/SoundCloud' : 'Alternative'}*`);
+        .setColor('#ff5500') // সাউন্ডক্লাউড অরেঞ্জ থিম কালার
+        .setDescription(`🎶 এখন প্লে হচ্ছে: **[${track.title}](${track.url})**\n💿 সোর্স: *SoundCloud*`)
+        .setThumbnail(track.thumbnail);
     queue.metadata.channel.send({ embeds: [embed] });
 });
 
 client.once('ready', async () => {
-    console.log(`✅ ${client.user.tag} অনলাইন হয়েছে!`);
+    console.log(`✅ ${client.user.tag} অনলাইন হয়েছে (SoundCloud Edition)!`);
     
     try {
         await player.extractors.loadDefault();
@@ -56,8 +57,8 @@ client.once('ready', async () => {
     const commands = [
         new SlashCommandBuilder()
             .setName('play')
-            .setDescription('গান প্লে করুন (Spotify/SoundCloud)')
-            .addStringOption(option => option.setName('song').setDescription('গানের নাম বা লিংক').setRequired(true)),
+            .setDescription('সাউন্ডক্লাউড থেকে গান প্লে করুন')
+            .addStringOption(option => option.setName('song').setDescription('গানের নাম বা সাউন্ডক্লাউড লিংক').setRequired(true)),
         new SlashCommandBuilder().setName('skip').setDescription('চলতি গানটি স্কিপ করুন'),
         new SlashCommandBuilder().setName('stop').setDescription('সব গান বন্ধ করে বট লিভ করান')
     ].map(command => command.toJSON());
@@ -70,7 +71,7 @@ client.once('ready', async () => {
     }
 });
 
-// গান প্লে করার কোর ফাংশন (ইউটিউব বাইপাস করে স্পোটিফাই/সাউন্ডক্লাউড সোর্স ব্যবহার)
+// গান প্লে করার কোর ফাংশন (সম্পূর্ণ সাউন্ডক্লাউড ভিত্তিক সার্চ)
 async function handlePlay(context, songName, isSlash = false) {
     const voiceChannel = context.member.voice.channel;
     if (!voiceChannel) {
@@ -79,35 +80,33 @@ async function handlePlay(context, songName, isSlash = false) {
     }
 
     if (isSlash) await context.deferReply();
-    else await context.channel.send(`🔍 **"${songName}"** খোঁজা হচ্ছে (Alternative Source)...`);
+    else await context.channel.send(`🔍 সাউন্ডক্লাউড থেকে **"${songName}"** খোঁজা হচ্ছে...`);
 
     try {
-        // ইউটিউব লিংক না হলে সরাসরি স্পোটিফাই বা সাউন্ডক্লাউড সার্চ করবে
-        let searchEngine = QueryType.SPOTIFY_SEARCH;
-        
+        // যদি সাউন্ডক্লাউডের ডিরেক্ট লিংক হয় তবে লিংক দিয়ে প্লে করবে, নয়তো সাউন্ডক্লাউড ডেটাবেসে নাম দিয়ে সার্চ করবে
+        let searchEngine = QueryType.SOUNDCLOUD_SEARCH;
         if (songName.includes('soundcloud.com')) {
-            searchEngine = QueryType.SOUNDCLOUD_SEARCH;
-        } else if (songName.includes('spotify.com')) {
-            searchEngine = QueryType.SPOTIFY_SONG;
+            searchEngine = QueryType.SOUNDCLOUD;
         }
 
         const { queue, track } = await player.play(voiceChannel, songName, {
-            searchEngine: searchEngine, // নতুন সোর্স ইঞ্জিন সেট করা হলো
+            searchEngine: searchEngine, // সাউন্ডক্লাউড ইঞ্জিন বাধ্যতামুলক করা হলো
             nodeOptions: {
                 metadata: { channel: context.channel },
                 leaveOnEmpty: true,
                 leaveOnEnd: false,
                 volume: 85,
-                bufferingTimeout: 5000
+                bufferingTimeout: 10000
             }
         });
 
         const msg = `✅ **${track.title}** কিউতে যোগ করা হয়েছে!`;
         if (isSlash) await context.editReply(msg);
     } catch (e) {
-        console.error("Play Error Catch:", e);
-        if (isSlash) await context.editReply('❌ গানটি চালাতে সমস্যা হয়েছে! (সাউন্ডক্লাউড মেথড ট্রাই করুন)');
-        else await context.channel.send('❌ গানটি চালাতে সমস্যা হয়েছে! (সাউন্ডক্লাউড মেথড ট্রাই করুন)');
+        console.error("SoundCloud Play Error Catch:", e);
+        const errorMsg = '❌ দুঃখিত, গানটি সাউন্ডক্লাউড থেকে প্লে করা যায়নি! দয়া করে অন্য কোনো গানের নাম লিখে চেষ্টা করুন।';
+        if (isSlash) await context.editReply(errorMsg);
+        else await context.channel.send(errorMsg);
     }
 }
 
