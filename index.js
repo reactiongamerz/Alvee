@@ -23,20 +23,42 @@ const client = new Client({
 const PREFIX = '!';
 const TOKEN = process.env.DISCORD_TOKEN;
 
-// ডিসকрд প্লেয়ার সেটআপ
+// ৩. ডিসকрд প্লেয়ার সেটআপ এবং এরর লিসেনার ফিক্স (সবার উপরে ডিফাইন করা হলো)
 const player = new Player(client);
+
+// গ্লোবাল এরর লিসেনার (এটি যুক্ত করার কারণে "Unhandled error event" আর আসবে না)
+player.events.on('error', (queue, error) => {
+    console.log(`[Player Error Handler] ${error.message}`);
+});
+
+player.events.on('playerError', (queue, error) => {
+    console.log(`[Player Connection Error Handler] ${error.message}`);
+});
+
+// মিউজিক ইভেন্ট হ্যান্ডলার (গান শুরু হলে লারা বটের মতো মেসেজ দেবে)
+player.events.on('playerStart', (queue, track) => {
+    const embed = new EmbedBuilder()
+        .setColor('#00ffcc')
+        .setDescription(`🎶 এখন প্লে হচ্ছে: **[${track.title}](${track.url})**`);
+    queue.metadata.channel.send({ embeds: [embed] });
+});
 
 client.once('ready', async () => {
     console.log(`✅ ${client.user.tag} অনলাইন হয়েছে!`);
     
-    // ইউটিউব এক্সট্রাক্টর লোড করা
-    await player.extractors.loadDefault();
+    // ইউটিউব এক্সট্রাক্টর এবং ডিফল্ট সোর্স লোড করা
+    try {
+        await player.extractors.loadDefault();
+        console.log('All extractors loaded successfully.');
+    } catch (e) {
+        console.error('Extractor error:', e);
+    }
     
     // স্ল্যাশ কমান্ড রেজিস্ট্রেশন
     const commands = [
         new SlashCommandBuilder()
             .setName('play')
-            .setDescription('যেকোনো গান প্লে করুন')
+            .setDescription('ইউটিউব থেকে গান প্লে করুন')
             .addStringOption(option => option.setName('song').setDescription('গানের নাম বা লিংক').setRequired(true)),
         new SlashCommandBuilder().setName('skip').setDescription('চলতি গানটি স্কিপ করুন'),
         new SlashCommandBuilder().setName('stop').setDescription('সব গান বন্ধ করে বট লিভ করান')
@@ -50,24 +72,7 @@ client.once('ready', async () => {
     }
 });
 
-// 🛠️ গুরুত্বপূর্ণ এরর লিসেনার (এটি যুক্ত করার কারণে বট আর ক্র্যাশ করবে না)
-player.events.on('error', (queue, error) => {
-    console.log(`[Player Error] ${error.message}`);
-});
-
-player.events.on('playerError', (queue, error) => {
-    console.log(`[Player Connection Error] ${error.message}`);
-});
-
-// মিউজিক ইভেন্ট হ্যান্ডলার (গান শুরু হলে লারা বটের মতো এম্বেড মেসেজ দেবে)
-player.events.on('playerStart', (queue, track) => {
-    const embed = new EmbedBuilder()
-        .setColor('#00ffcc')
-        .setDescription(`🎶 এখন প্লে হচ্ছে: **[${track.title}](${track.url})**`);
-    queue.metadata.channel.send({ embeds: [embed] });
-});
-
-// প্রিফিক্স (!) এবং স্ল্যাশ (/) কমান্ডের জন্য কমন ফাংশন
+// গান প্লে করার কোর ফাংশন
 async function handlePlay(context, songName, isSlash = false) {
     const voiceChannel = context.member.voice.channel;
     if (!voiceChannel) {
@@ -84,7 +89,8 @@ async function handlePlay(context, songName, isSlash = false) {
                 metadata: { channel: context.channel },
                 leaveOnEmpty: true,
                 leaveOnEnd: false,
-                volume: 80
+                volume: 85,
+                bufferingTimeout: 5000 // বাফারিং এরর এড়ানোর টাইমআউট
             }
         });
 
@@ -92,12 +98,12 @@ async function handlePlay(context, songName, isSlash = false) {
         if (isSlash) await context.editReply(msg);
     } catch (e) {
         console.error("Play Error Catch:", e);
-        if (isSlash) await context.editReply('❌ গানটি চালাতে সমস্যা হয়েছে!');
-        else await context.channel.send('❌ গানটি চালাতে সমস্যা হয়েছে!');
+        if (isSlash) await context.editReply('❌ গানটি চালাতে সমস্যা হয়েছে! (ইউটিউব রেস্ট্রিকশন এরর)');
+        else await context.channel.send('❌ গানটি চালাতে সমস্যা হয়েছে! (ইউটিউব রেস্ট্রিকশন এরর)');
     }
 }
 
-// ৩. চ্যাট মেসেজ ইভেন্ট (! কমান্ড)
+// ৪. চ্যাট মেসেজ ইভেন্ট (! কমান্ড)
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.content.startsWith(PREFIX)) return;
 
@@ -125,7 +131,7 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// ৪. স্ল্যাশ ইভেন্ট (/ কমান্ড)
+// ৫. স্ল্যাশ ইভেন্ট (/ কমান্ড)
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
