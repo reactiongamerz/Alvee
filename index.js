@@ -48,6 +48,18 @@ const commands = [
 client.once('ready', async () => {
     console.log(`✅ ${client.user.tag} হিসেবে লারা মিউজিক বট অনলাইন!`);
     
+    // মোবাইল বা রেন্ডার হোস্টিংয়ে ইউটিউব ব্লকিং এড়ানোর জন্য টোকেন সেটআপ
+    try {
+        await play.setToken({
+            youtube: {
+                cookie: "" 
+            }
+        });
+        console.log('Play-dl token sets successfully.');
+    } catch (e) {
+        console.error('Play-dl token error:', e);
+    }
+    
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
@@ -57,17 +69,25 @@ client.once('ready', async () => {
     }
 });
 
-// ৪. গান প্লে করার মেইন ফাংশন (Queue ও Loop হ্যান্ডেলার)
+// ৪. গান প্লে করার মেইন ফাংশন (Queue, Loop ও ইউটিউব স্ট্রিম হ্যান্ডেলার)
 async function playSong(guildId, song) {
     const serverQueue = queues.get(guildId);
     if (!song) {
-        serverQueue.connection.destroy();
+        if (serverQueue && serverQueue.connection) {
+            serverQueue.connection.destroy();
+        }
         queues.delete(guildId);
         return;
     }
 
     try {
-        const stream = await play.stream(song.url);
+        // ইউটিউব থেকে অডিও স্ট্রিম নেওয়ার ব্যাকআপ মেথডসহ সেটআপ
+        const stream = await play.stream(song.url, { seek: 0, quality: 0 }).catch(async (err) => {
+            console.log("Stream error, retrying with search...");
+            const nextSearch = await play.search(song.title, { limit: 1 });
+            return await play.stream(nextSearch.url);
+        });
+
         const resource = createAudioResource(stream.stream, { inputType: stream.type });
         
         serverQueue.player.play(resource);
@@ -79,10 +99,15 @@ async function playSong(guildId, song) {
         
         serverQueue.textChannel.send({ embeds: [embed] });
     } catch (error) {
-        console.error(error);
-        serverQueue.textChannel.send('❌ গানটি প্লে করতে সমস্যা হয়েছে, পরবর্তী গানে যাওয়া হচ্ছে।');
+        console.error("PlaySong Error:", error);
+        serverQueue.textChannel.send('❌ ইউটিউব থেকে গানটি লোড করা যায়নি। পরের গানটি চেষ্টা করা হচ্ছে...');
         serverQueue.songs.shift();
-        playSong(guildId, serverQueue.songs[0]);
+        if (serverQueue.songs.length > 0) {
+            playSong(guildId, serverQueue.songs);
+        } else {
+            if (serverQueue.connection) serverQueue.connection.destroy();
+            queues.delete(guildId);
+        }
     }
 }
 
@@ -91,7 +116,7 @@ async function handleMusicCommands(action, context, args = null, isSlash = false
     const guildId = context.guild.id;
     const member = context.member;
     const voiceChannel = member.voice.channel;
-    const textChannel = isSlash ? context.channel : context.channel;
+    const textChannel = context.channel;
     let serverQueue = queues.get(guildId);
 
     if (action === 'ping') {
@@ -99,9 +124,8 @@ async function handleMusicCommands(action, context, args = null, isSlash = false
         return isSlash ? context.reply(replyText) : context.reply(replyText);
     }
 
-    // গান সংক্রান্ত সব কমান্ডের জন্য আগে ভয়েস চ্যানেলে থাকা জরুরি
     if (!voiceChannel) {
-        const msg = '❌ আগে আপনাকে একটি ভয়েס চ্যানেলে জয়েন করতে হবে!';
+        const msg = '❌ আগে আপনাকে একটি ভয়েস চ্যানেলে জয়েন করতে হবে!';
         return isSlash ? context.reply({ content: msg, ephemeral: true }) : context.reply(msg);
     }
 
@@ -164,7 +188,6 @@ async function handleMusicCommands(action, context, args = null, isSlash = false
         }
     }
 
-    // বাকি অন্যান্য মিউজিক কন্ট্রোল কমান্ড
     if (!serverQueue) {
         const msg = '❌ বর্তমানে সার্ভারে কোনো গান চলছে না!';
         return isSlash ? context.reply(msg) : context.reply(msg);
@@ -179,7 +202,7 @@ async function handleMusicCommands(action, context, args = null, isSlash = false
     if (action === 'stop') {
         serverQueue.songs = [];
         serverQueue.player.stop();
-        serverQueue.connection.destroy();
+        if (serverQueue.connection) serverQueue.connection.destroy();
         queues.delete(guildId);
         const msg = '🛑 সব গান বন্ধ করা হয়েছে এবং বট চ্যানেল লিভ করেছে!';
         return isSlash ? context.reply(msg) : context.reply(msg);
@@ -230,16 +253,3 @@ client.on('messageCreate', async (message) => {
 
 // ७. স্ল্যাশ (/) ইভেন্ট হ্যান্ডলার
 client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isChatInputCommand()) return;
-
-    const { commandName } = interaction;
-
-    if (commandName === 'play') {
-        const songName = interaction.options.getString('song');
-        await handleMusicCommands('play', interaction, songName, true);
-    } else {
-        await handleMusicCommands(commandName, interaction, null, true);
-    }
-});
-
-client.login(TOKEN);
