@@ -1,7 +1,7 @@
 {
   "name": "lara-music-bot",
   "version": "1.0.0",
-  "description": "Lara Music Bot Final Version",
+  "description": "Lara Music Bot Anti-Block Version",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -13,7 +13,7 @@
     "discord.js": "^14.14.1",
     "@discordjs/voice": "^0.16.0",
     "@discordjs/opus": "^0.9.0",
-    "@distube/ytdl-core": "^4.15.1",
+    "@distube/ytdl-core": "latest",
     "yt-search": "^2.10.4",
     "libsodium-wrappers": "^0.7.13",
     "tweetnacl": "^1.0.3",
