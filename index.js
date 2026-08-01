@@ -8,7 +8,7 @@ app.listen(port, '0.0.0.0', () => console.log(`Web server active on port ${port}
 
 // ২. মডিউল ইমপোর্ট
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { Player } = require('discord-player');
+const { Player, QueryType } = require('discord-player');
 require('dotenv').config();
 
 const client = new Client({
@@ -23,30 +23,28 @@ const client = new Client({
 const PREFIX = '!';
 const TOKEN = process.env.DISCORD_TOKEN;
 
-// ৩. ডিসকрд প্লেয়ার সেটআপ এবং এরর লিসেনার ফিক্স (সবার উপরে ডিফাইন করা হলো)
+// ৩. ডিসকрд প্লেয়ার সেটআপ এবং এরর লিসেনার
 const player = new Player(client);
 
-// গ্লোবাল এরর লিসেনার (এটি যুক্ত করার কারণে "Unhandled error event" আর আসবে না)
 player.events.on('error', (queue, error) => {
-    console.log(`[Player Error Handler] ${error.message}`);
+    console.log(`[Player Error] ${error.message}`);
 });
 
 player.events.on('playerError', (queue, error) => {
-    console.log(`[Player Connection Error Handler] ${error.message}`);
+    console.log(`[Player Connection Error] ${error.message}`);
 });
 
-// মিউজিক ইভেন্ট হ্যান্ডলার (গান শুরু হলে লারা বটের মতো মেসেজ দেবে)
+// মিউজিক ইভেন্ট হ্যান্ডলার (গান শুরু হলে সুন্দর মেসেজ বক্স দেবে)
 player.events.on('playerStart', (queue, track) => {
     const embed = new EmbedBuilder()
         .setColor('#00ffcc')
-        .setDescription(`🎶 এখন প্লে হচ্ছে: **[${track.title}](${track.url})**`);
+        .setDescription(`🎶 এখন প্লে হচ্ছে: **[${track.title}](${track.url})**\n💿 সোর্স: *${track.requestedBy ? 'Spotify/SoundCloud' : 'Alternative'}*`);
     queue.metadata.channel.send({ embeds: [embed] });
 });
 
 client.once('ready', async () => {
     console.log(`✅ ${client.user.tag} অনলাইন হয়েছে!`);
     
-    // ইউটিউব এক্সট্রাক্টর এবং ডিফল্ট সোর্স লোড করা
     try {
         await player.extractors.loadDefault();
         console.log('All extractors loaded successfully.');
@@ -58,7 +56,7 @@ client.once('ready', async () => {
     const commands = [
         new SlashCommandBuilder()
             .setName('play')
-            .setDescription('ইউটিউব থেকে গান প্লে করুন')
+            .setDescription('গান প্লে করুন (Spotify/SoundCloud)')
             .addStringOption(option => option.setName('song').setDescription('গানের নাম বা লিংক').setRequired(true)),
         new SlashCommandBuilder().setName('skip').setDescription('চলতি গানটি স্কিপ করুন'),
         new SlashCommandBuilder().setName('stop').setDescription('সব গান বন্ধ করে বট লিভ করান')
@@ -72,7 +70,7 @@ client.once('ready', async () => {
     }
 });
 
-// গান প্লে করার কোর ফাংশন
+// গান প্লে করার কোর ফাংশন (ইউটিউব বাইপাস করে স্পোটিফাই/সাউন্ডক্লাউড সোর্স ব্যবহার)
 async function handlePlay(context, songName, isSlash = false) {
     const voiceChannel = context.member.voice.channel;
     if (!voiceChannel) {
@@ -81,16 +79,26 @@ async function handlePlay(context, songName, isSlash = false) {
     }
 
     if (isSlash) await context.deferReply();
-    else await context.channel.send(`🔍 **"${songName}"** খোঁজা হচ্ছে...`);
+    else await context.channel.send(`🔍 **"${songName}"** খোঁজা হচ্ছে (Alternative Source)...`);
 
     try {
+        // ইউটিউব লিংক না হলে সরাসরি স্পোটিফাই বা সাউন্ডক্লাউড সার্চ করবে
+        let searchEngine = QueryType.SPOTIFY_SEARCH;
+        
+        if (songName.includes('soundcloud.com')) {
+            searchEngine = QueryType.SOUNDCLOUD_SEARCH;
+        } else if (songName.includes('spotify.com')) {
+            searchEngine = QueryType.SPOTIFY_SONG;
+        }
+
         const { queue, track } = await player.play(voiceChannel, songName, {
+            searchEngine: searchEngine, // নতুন সোর্স ইঞ্জিন সেট করা হলো
             nodeOptions: {
                 metadata: { channel: context.channel },
                 leaveOnEmpty: true,
                 leaveOnEnd: false,
                 volume: 85,
-                bufferingTimeout: 5000 // বাফারিং এরর এড়ানোর টাইমআউট
+                bufferingTimeout: 5000
             }
         });
 
@@ -98,8 +106,8 @@ async function handlePlay(context, songName, isSlash = false) {
         if (isSlash) await context.editReply(msg);
     } catch (e) {
         console.error("Play Error Catch:", e);
-        if (isSlash) await context.editReply('❌ গানটি চালাতে সমস্যা হয়েছে! (ইউটিউব রেস্ট্রিকশন এরর)');
-        else await context.channel.send('❌ গানটি চালাতে সমস্যা হয়েছে! (ইউটিউব রেস্ট্রিকশন এরর)');
+        if (isSlash) await context.editReply('❌ গানটি চালাতে সমস্যা হয়েছে! (সাউন্ডক্লাউড মেথড ট্রাই করুন)');
+        else await context.channel.send('❌ গানটি চালাতে সমস্যা হয়েছে! (সাউন্ডক্লাউড মেথড ট্রাই করুন)');
     }
 }
 
