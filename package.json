@@ -1,7 +1,7 @@
 {
   "name": "lara-music-bot",
   "version": "1.0.0",
-  "description": "Lara Music Bot 100% Fixed",
+  "description": "Lara Music Bot 100% Fixed with Voice Libraries",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -12,9 +12,11 @@
   "dependencies": {
     "discord.js": "^14.14.1",
     "@discordjs/voice": "^0.16.0",
+    "@discordjs/opus": "^0.9.0",
     "@distube/ytdl-core": "^4.15.1",
     "yt-search": "^2.10.4",
     "libsodium-wrappers": "^0.7.13",
+    "tweetnacl": "^1.0.3",
     "ffmpeg-static": "^5.2.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2"
