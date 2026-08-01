@@ -1,7 +1,7 @@
 {
   "name": "lara-music-bot",
   "version": "1.0.0",
-  "description": "Lara Music Bot 100% Stable on Render",
+  "description": "Lara Music Bot 100% Fixed",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -13,6 +13,7 @@
     "discord.js": "^14.14.1",
     "@discordjs/voice": "^0.16.0",
     "@distube/ytdl-core": "^4.15.1",
+    "yt-search": "^2.10.4",
     "libsodium-wrappers": "^0.7.13",
     "ffmpeg-static": "^5.2.0",
     "dotenv": "^16.4.5",
