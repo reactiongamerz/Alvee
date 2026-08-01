@@ -11,9 +11,8 @@ const client = new Client({
     ]
 });
 
-const PREFIX = '!'; // আপনার বটের প্রিফিক্স
+const PREFIX = '!'; // বটের প্রিফিক্স
 
-// মিউজিক কিউ (Queue) ট্র্যাক করার জন্য গ্লোবাল অবজেক্ট
 const queue = new Map();
 
 client.once('ready', () => {
@@ -27,7 +26,7 @@ client.on('messageCreate', async (message) => {
     const command = args.shift().toLowerCase();
     const serverQueue = queue.get(message.guild.id);
 
-    // ১. প্লে কমান্ড (!p বা !play) - কারার মতো প্রিমিয়াম থিম এমবেড সহ
+    // ১. প্লে কমান্ড (!p বা !play)
     if (command === 'play' || command === 'p') {
         const voiceChannel = message.member.voice.channel;
         if (!voiceChannel) return message.reply('❌ গান শোনার জন্য আগে একটি ভয়েস চ্যানেলে জয়েন করুন!');
@@ -42,8 +41,8 @@ client.on('messageCreate', async (message) => {
             const song = {
                 title: yt_info[0].title,
                 url: yt_info[0].url,
-                thumbnail: yt_info[0].thumbnails[0]?.url || '',
-                duration: yt_info[0].durationRaw,
+                thumbnail: yt_info[0].thumbnails?.[0]?.url || '',
+                duration: yt_info[0].durationRaw || 'Unknown',
                 requestedBy: message.author.tag
             };
 
@@ -77,9 +76,8 @@ client.on('messageCreate', async (message) => {
             } else {
                 serverQueue.songs.push(song);
                 
-                // কারার থিমে গান কিউতে অ্যাড হওয়ার মেসেজ
                 const queueEmbed = new EmbedBuilder()
-                    .setColor('#FF007F') // উজ্জ্বল গোলাপী থিম কালার
+                    .setColor('#FF007F')
                     .setTitle('🎵 গানটি তালিকায় যোগ করা হয়েছে')
                     .setDescription(`[${song.title}](${song.url})`)
                     .setThumbnail(song.thumbnail)
@@ -98,10 +96,10 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // ২. স্কিপ কমান্ড (!skip)
+    // ২. স্কিপ কমান্ড (!skip বা !s)
     if (command === 'skip' || command === 's') {
         if (!message.member.voice.channel) return message.reply('❌ এই কমান্ডটি দিতে আগে ভয়েস চ্যানেলে ঢুকুন!');
-        if (!serverQueue) return message.reply('❌ এই মুহূর্তে কোনো গান বাজছে না যা স্কিপ করব!');
+        if (!serverQueue) return message.reply('❌ এই মুহূর্তে কোনো গান বাজছে না!');
         serverQueue.player.stop();
         return message.reply('⏭️ গানটি স্কিপ করা হলো!');
     }
@@ -110,10 +108,10 @@ client.on('messageCreate', async (message) => {
     if (command === 'pause') {
         if (!serverQueue) return message.reply('❌ কোনো গান বাজছে না!');
         serverQueue.player.pause();
-        return message.reply('⏸️ গানটি সাময়িকভাবে থামানো (Pause) হলো!');
+        return message.reply('⏸️ গানটি সাময়িকভাবে থামানো হলো!');
     }
 
-    // ৪. রিজিউম কমান্ড (!resume)
+    // ৪. রিজিউম কমান্ড (!resume বা !r)
     if (command === 'resume' || command === 'r') {
         if (!serverQueue) return message.reply('❌ কোনো গান তালিকায় নেই!');
         serverQueue.player.unpause();
@@ -122,7 +120,7 @@ client.on('messageCreate', async (message) => {
 
     // ৫. তালিকা দেখার কমান্ড (!queue বা !q)
     if (command === 'queue' || command === 'q') {
-        if (!serverQueue || serverQueue.songs.length === 0) return message.reply('❌ বর্তমানে গান বাজানোর তালিকা সম্পূর্ণ খালি!');
+        if (!serverQueue || serverQueue.songs.length === 0) return message.reply('❌ বর্তমানে গান বাজানোর তালিকা খালি!');
         
         let i = 1;
         const songsList = serverQueue.songs.map(song => `**${i++}.** [${song.title}](${song.url}) - \`${song.duration}\``).join('\n');
@@ -136,18 +134,18 @@ client.on('messageCreate', async (message) => {
         return message.channel.send({ embeds: [qEmbed] });
     }
 
-    // ৬. স্টপ/লিভ কমান্ড (!stop বা !leave)
-    if (command === 'stop' || command === 'leave' || command === 'dc') {
+    // ৬. স্টপ কমান্ড (!stop বা !leave)
+    if (command === 'stop' || command === 'leave') {
         if (!serverQueue) return message.reply('❌ বট কোনো ভয়েস চ্যানেলে নেই!');
         serverQueue.songs = [];
         serverQueue.connection.destroy();
         queue.delete(message.guild.id);
-        return message.reply('👋 ভয়েস চ্যানেল থেকে বিদায় নিলাম, আবার দেখা হবে!');
+        return message.reply('👋 ভয়েস চ্যানেল থেকে বিদায় নিলাম!');
     }
 });
 
-// গান প্লে করার মূল ফাংশন (কারার আকর্ষণীয় Now Playing কার্ড থিম সহ)
-async fn playSong(guildId, song) {
+// গান প্লে করার মূল ফাংশন
+async function playSong(guildId, song) {
     const serverQueue = queue.get(guildId);
     if (!song) {
         serverQueue.connection.destroy();
@@ -162,16 +160,14 @@ async fn playSong(guildId, song) {
         serverQueue.player.play(resource);
         serverQueue.connection.subscribe(serverQueue.player);
 
-        // কারার প্রিমিয়াম 'Now Playing' এমবেড থিম কার্ড
         const nowPlayingEmbed = new EmbedBuilder()
-            .setColor('#7289DA') // ডিসকর্ড থিম ব্লু কালার
+            .setColor('#7289DA')
             .setAuthor({ name: '🎤 এখন বাজছে (Now Playing)' })
             .setTitle(song.title)
             .setURL(song.url)
             .setDescription(`**সময়:** \`${song.duration}\` | **অনুরোধকারী:** \`${song.requestedBy}\``)
             .setThumbnail(song.thumbnail)
             .addFields({ name: '🎛️ কন্ট্রোল কমান্ডস', value: 'বিরতি: `!pause` | চালু: `!resume` | পরবর্তী গান: `!skip` | বন্ধ: `!stop` '})
-            .setImage(song.thumbnail) // বড় ব্যাকগ্রাউন্ড ব্যানার ইমেজ থিম
             .setFooter({ text: 'Karaoke & Premium Audio Theme System' })
             .setTimestamp();
 
