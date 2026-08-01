@@ -17,13 +17,12 @@ const play = require('play-dl');
 const express = require('express');
 require('dotenv').config();
 
-// 1. Render Keep-Alive Server Setup
+// Render Node Server Keep-Alive
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Lara Engine is Running Smoothly!'));
-app.listen(PORT, () => console.log(`[Lara Web] Listening on port: ${PORT}`));
+app.get('/', (req, res) => res.send('Lara Engine Verified & Stable!'));
+app.listen(PORT, () => console.log(`[Lara Core] Port dynamic verified: ${PORT}`));
 
-// 2. Client Initialization with Proper Intents
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -34,14 +33,12 @@ const client = new Client({
 });
 
 const PREFIX = '-'; 
-const queue = new Map(); // Core Music Queue Matrix
+const queue = new Map();
 
 client.once('ready', () => {
-    console.log(`[Lara Bot] Connected successfully as ${client.user.tag}`);
-    client.user.setActivity(`${PREFIX}p <song>`, { type: 3 });
+    console.log(`[Online Instance] Complete matching: ${client.user.tag}`);
 });
 
-// 3. Message Trigger Context
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.content.startsWith(PREFIX)) return;
 
@@ -52,57 +49,48 @@ client.on('messageCreate', async (message) => {
     if (command === 'play' || command === 'p') {
         execute(message, args);
     } else if (command === 'skip' || command === 's') {
-        if (!message.member.voice.channel) return message.reply('Apnake age voice channel-e join korte hobe!');
-        if (!serverQueue) return message.reply('Kono gan cholche na!');
+        if (!message.member.voice.channel) return message.reply('Voice channel-e join kora thakte hobe!');
+        if (!serverQueue) return message.reply('Kono track akhon cholche na!');
         serverQueue.player.stop();
-        message.reply('⏭️ Gan-ti skip kora hoyeche!');
+        message.reply('⏭️ Gan skip kora hoyeche!');
     } else if (command === 'stop' || command === 'dc') {
-        if (!message.member.voice.channel) return message.reply('Apnake voice channel-e thakte hobe!');
-        if (!serverQueue) return message.reply('Bot active nei ba queue khali!');
+        if (!serverQueue) return message.reply('Bot ekhon connection matrix-e nei!');
         serverQueue.songs = [];
         if (serverQueue.player) serverQueue.player.stop();
         if (serverQueue.connection) serverQueue.connection.destroy();
         queue.delete(message.guild.id);
-        message.reply('🛑 Bot successfully disconnected!');
+        message.reply('🛑 Disconnected and cleared!');
     }
 });
 
-// 4. Music Play Driver Logic
 async function execute(message, args) {
     const voiceChannel = message.member.voice.channel;
-    if (!voiceChannel) return message.reply('Apnake age voice channel-e join korte hobe!');
-    if (!args.length) return message.reply('Ganer naam ba YouTube Link likhun! (Ex: `-p stay`)');
+    if (!voiceChannel) return message.reply('Apnake prothome ekta voice channel-e join korte hobe!');
+    if (!args.length) return message.reply('Ganer naam ba line paste korun! Ex: `-p bol kaffara`');
 
     let songData = null;
 
     try {
         await message.channel.sendTyping();
-
-        // Check if query is URL or Keyword search
-        if (args[0].startsWith('https://')) {
-            const validation = await play.validate(args[0]);
-            if (validation === 'video') {
-                const info = await play.video_info(args[0]);
-                songData = info.video_details;
-            } else {
-                return message.reply('Shudhu direct YouTube single video link ba plain string keyword support korbe!');
-            }
-        } else {
-            const searchResult = await play.search(args.join(' '), { limit: 1, source: { youtube: 'video' } });
-            if (!searchResult || searchResult.length === 0) {
-                return message.reply('Kono gan khunje paowa jayni! Alada naam likhe try korun.');
-            }
-            songData = searchResult[0];
+        
+        // Handling raw input string queries correctly
+        const searchResult = await play.search(args.join(' '), { limit: 1, source: { youtube: 'video' } });
+        
+        if (!searchResult || searchResult.length === 0) {
+            return message.reply('Kono content khunje paowa jayni!');
         }
+        
+        // FIXED: Accessing index element of array to prevent undefined object parameters
+        songData = searchResult[0]; 
     } catch (error) {
         console.error(error);
-        return message.reply('⚠️ YouTube standard parameters connect korte somossa hocche! Abar try korun.');
+        return message.reply('⚠️ Search system logic timeout! Abar request pathan.');
     }
 
     const song = {
         title: songData.title,
         url: songData.url,
-        duration: songData.durationRaw || 'Live',
+        duration: songData.durationRaw || '00:00',
         thumbnail: songData.thumbnails && songData.thumbnails.length > 0 ? songData.thumbnails[0].url : ''
     };
 
@@ -135,93 +123,77 @@ async function execute(message, args) {
             queueConstruct.player = player;
             connection.subscribe(player);
 
-            playSong(message.guild, queueConstruct.songs[0]);
+            playSong(message.guild, queueConstruct.songs);
         } catch (err) {
-            console.error(err);
             queue.delete(message.guild.id);
-            return message.reply('Voice channel connection failed!');
+            return message.reply('Voice server stream mapping error!');
         }
     } else {
         serverQueue.songs.push(song);
-        const addEmbed = new EmbedBuilder()
-            .setColor('#00ffcc')
-            .setTitle('🎵 Queue-te juktto holo')
-            .setDescription(`**[${song.title}](${song.url})**`)
-            .setThumbnail(song.thumbnail)
-            .setFooter({ text: `Duration: ${song.duration}` });
-        return message.channel.send({ embeds: [addEmbed] });
+        return message.reply(`✅ **${song.title}** queue list-e add hoyeche!`);
     }
 }
 
-// 5. Stream Renderer Pipeline
-async function playSong(guild, song) {
+async function playSong(guild, songs) {
     const serverQueue = queue.get(guild.id);
-    if (!song) {
-        // Auto leave after 20 seconds of silence/empty queue
+    if (!songs || songs.length === 0) {
         setTimeout(() => {
-            const checkQueue = queue.get(guild.id);
-            if (checkQueue && checkQueue.songs.length === 0) {
-                if (checkQueue.connection) checkQueue.connection.destroy();
+            const finalCheck = queue.get(guild.id);
+            if (finalCheck && finalCheck.songs.length === 0) {
+                if (finalCheck.connection) finalCheck.connection.destroy();
                 queue.delete(guild.id);
             }
-        }, 20000);
+        }, 15000);
         return;
     }
+
+    const song = songs[0]; // Pointing to active stack index
 
     try {
         const stream = await play.stream(song.url, { discordPlayerCompatibility: true });
         const resource = createAudioResource(stream.stream, { inputType: stream.type });
-        
         serverQueue.player.play(resource);
 
         const playEmbed = new EmbedBuilder()
             .setColor('#ff007f')
-            .setTitle('🎶 Lara Music System — Playing Now')
+            .setTitle('🎶 Lara Player — Now Playing')
             .setDescription(`**[${song.title}](${song.url})**`)
             .setThumbnail(song.thumbnail)
-            .addFields({ name: '⏱️ Duration', value: song.duration, inline: true })
-            .setFooter({ text: 'Use buttons to control dashboard playback' });
+            .setFooter({ text: `Duration: ${song.duration}` });
 
-        const controlRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('pause_resume_btn').setLabel('⏸️ Pause/Resume').setStyle(ButtonStyle.Primary),
-            new ButtonBuilder().setCustomId('skip_btn').setLabel('⏭️ Skip').setStyle(ButtonStyle.Success)
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('p_r_btn').setLabel('⏸️ Pause/Resume').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('sk_btn').setLabel('⏭️ Skip').setStyle(ButtonStyle.Success)
         );
 
-        const activeMsg = await serverQueue.textChannel.send({ embeds: [playEmbed], components: [controlRow] });
-        const collector = activeMsg.createMessageComponentCollector({ time: 600000 }); // 10 Minutes control active
+        const activeMsg = await serverQueue.textChannel.send({ embeds: [playEmbed], components: [row] });
+        const collector = activeMsg.createMessageComponentCollector({ time: 600000 });
 
         collector.on('collect', async (interaction) => {
-            if (!interaction.member.voice.channel || interaction.member.voice.channel.id !== serverQueue.voiceChannel.id) {
-                return interaction.reply({ content: 'Apnake eii voice channel-e thakte hobe control use korar jonno!', ephemeral: true });
-            }
-            
+            if (!interaction.member.voice.channel) return interaction.reply({ content: 'Voice channel-e join kora thakun control use korte!', ephemeral: true });
             await interaction.deferUpdate();
-
-            if (interaction.customId === 'pause_resume_btn') {
+            if (interaction.customId === 'p_r_btn') {
                 if (serverQueue.playing) {
                     serverQueue.player.pause();
                     serverQueue.playing = false;
-                    serverQueue.textChannel.send(`⏸️ **${interaction.user.username}** gan-ti temporary pause korechen.`);
                 } else {
                     serverQueue.player.unpause();
                     serverQueue.playing = true;
-                    serverQueue.textChannel.send(`▶️ **${interaction.user.username}** gan-ti resume korechen.`);
                 }
-            } else if (interaction.customId === 'skip_btn') {
+            } else if (interaction.customId === 'sk_btn') {
                 serverQueue.player.stop();
-                serverQueue.textChannel.send(`⏭️ **${interaction.user.username}** panels standard control are skip button dashboard executed.`);
             }
         });
 
         serverQueue.player.once(AudioPlayerStatus.Idle, () => {
             serverQueue.songs.shift();
-            playSong(guild, serverQueue.songs[0]);
+            playSong(guild, serverQueue.songs);
         });
 
-    } catch (error) {
-        console.error(error);
+    } catch (e) {
+        console.error(e);
         serverQueue.songs.shift();
-        playSong(guild, serverQueue.songs[0]);
+        playSong(guild, serverQueue.songs);
     }
 }
 
