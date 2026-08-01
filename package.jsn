@@ -1,15 +1,17 @@
 {
-  "name": "alvee-music-bot",
+  "name": "lara-music-bot",
   "version": "1.0.0",
-  "description": "Alvee (আল*ভী) - A complete Discord Music Bot using Slash Commands",
+  "description": "A high-quality Discord Music Bot like Lara",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@discordjs/voice": "^0.17.0",
     "discord.js": "^14.14.1",
+    "@discordjs/voice": "^0.16.0",
+    "play-dl": "^1.9.6",
     "libsodium-wrappers": "^0.7.13",
-    "play-dl": "^1.9.7"
+    "ffmpeg-static": "^5.2.0",
+    "dotenv": "^16.4.5"
   }
 }
