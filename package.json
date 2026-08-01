@@ -1,20 +1,16 @@
 {
-  "name": "lara-music-bot",
+  "name": "lara-discord-bot",
   "version": "1.0.0",
-  "description": "A high-quality Discord music bot like Lara",
+  "description": "Lara inspired advanced dual-prefix and slash command discord bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.15.3",
-    "@discordjs/voice": "^0.17.0",
-    "play-dl": "^1.9.7",
-    "express": "^4.19.2",
-    "dotenv": "^16.4.5",
-    "libsodium-wrappers": "^0.7.13"
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=16.11.0"
   }
 }
