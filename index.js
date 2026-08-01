@@ -1,15 +1,14 @@
-// ১. রেন্ডার পোর্ট এরর ফিক্স (এক্সপ্রেস সার্ভার)
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => res.send('✅ লারা বট ২৪ ঘন্টা সফলভাবে লাইভ আছে!'));
-app.listen(port, () => console.log(`Web server active on port ${port}`));
+app.get('/', (req, res) => res.send('Lara Bot is Live!'));
+app.listen(port, '0.0.0.0', () => console.log(`Web server active on port ${port}`));
 
-// ২. মূল মডিউল ইমপোর্ট
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const ytdl = require('@distube/ytdl-core');
+const ytSearch = require('yt-search');
 require('dotenv').config();
 
 const client = new Client({
@@ -25,7 +24,6 @@ const PREFIX = '!';
 const TOKEN = process.env.DISCORD_TOKEN;
 const queues = new Map();
 
-// ৩. স্ল্যাশ কমান্ডের তালিকা
 const commands = [
     new SlashCommandBuilder()
         .setName('play')
@@ -41,7 +39,7 @@ const commands = [
 ].map(command => command.toJSON());
 
 client.once('ready', async () => {
-    console.log(`✅ ${client.user.tag} হিসেবে লারা বট অনলাইন!`);
+    console.log(`✅ ${client.user.tag} অনলাইন হয়েছে!`);
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
@@ -50,7 +48,6 @@ client.once('ready', async () => {
     }
 });
 
-// ৪. গান প্লে করার কোর ফাংশন
 async function playSong(guildId, song) {
     const serverQueue = queues.get(guildId);
     if (!song) {
@@ -60,7 +57,6 @@ async function playSong(guildId, song) {
     }
 
     try {
-        // ytdl-core দিয়ে হাই কোয়ালিটি অডিও স্ট্রিম নেওয়া
         const stream = ytdl(song.url, {
             filter: 'audioonly',
             highWaterMark: 1 << 25,
@@ -77,13 +73,11 @@ async function playSong(guildId, song) {
         serverQueue.textChannel.send({ embeds: [embed] });
     } catch (error) {
         console.error(error);
-        serverQueue.textChannel.send('❌ গানটি লোড করা যায়নি, পরের গান চেষ্টা করা হচ্ছে...');
         serverQueue.songs.shift();
         playSong(guildId, serverQueue.songs[0]);
     }
 }
 
-// ৫. কমন কমান্ড প্রসেসর
 async function handleMusicCommands(action, context, args = null, isSlash = false) {
     const guildId = context.guild.id;
     const member = context.member;
@@ -96,8 +90,7 @@ async function handleMusicCommands(action, context, args = null, isSlash = false
     }
 
     if (!voiceChannel) {
-        const msg = '❌ আগে আপনাকে একটি ভয়েস চ্যানেলে জয়েন করতে হবে!';
-        return isSlash ? context.reply({ content: msg, ephemeral: true }) : context.reply(msg);
+        return isSlash ? context.reply({ content: '❌ আগে ভয়েস চ্যানেলে জয়েন করুন!', ephemeral: true }) : context.reply('❌ আগে ভয়েস চ্যানেলে জয়েন করুন!');
     }
 
     if (action === 'play') {
@@ -105,19 +98,23 @@ async function handleMusicCommands(action, context, args = null, isSlash = false
         else await textChannel.send(`🔍 **"${args}"** খোঁজা হচ্ছে...`);
 
         try {
-            // গান সার্চ অথবা লিংক যাচাই করা
             let videoUrl = args;
-            if (!ytdl.validateURL(args)) {
-                // নাম দিলে সরাসরি ইউটিউব লিংক তৈরি করার প্রসেস
-                videoUrl = `https://youtube.com`; // ব্যাকআপ ডিফল্ট ডিফেন্স
-            }
-            
-            // গান সার্চ ও তথ্য সংগ্রহ (সহজ মেথড)
-            const info = await ytdl.getBasicInfo(args).catch(() => null);
-            const title = info ? info.videoDetails.title : args;
-            const url = info ? info.videoDetails.video_url : `https://youtube.com{encodeURIComponent(args)}`;
+            let videoTitle = args;
 
-            const song = { title: title, url: url };
+            if (!ytdl.validateURL(args)) {
+                const r = await ytSearch(args);
+                const video = r.videos[0];
+                if (!video) {
+                    return isSlash ? context.editReply('❌ গান পাওয়া যায়নি!') : context.reply('❌ গান পাওয়া যায়নি!');
+                }
+                videoUrl = video.url;
+                videoTitle = video.title;
+            } else {
+                const info = await ytdl.getBasicInfo(args);
+                videoTitle = info.videoDetails.title;
+            }
+
+            const song = { title: videoTitle, url: videoUrl };
 
             if (!serverQueue) {
                 const queueConstruct = {
@@ -141,7 +138,7 @@ async function handleMusicCommands(action, context, args = null, isSlash = false
 
                 queueConstruct.player.on(AudioPlayerStatus.Idle, () => {
                     if (queueConstruct.loop) {
-                        playSong(guildId, queueConstruct.construct.songs[0]);
+                        playSong(guildId, queueConstruct.songs[0]);
                     } else {
                         queueConstruct.songs.shift();
                         playSong(guildId, queueConstruct.songs[0]);
@@ -153,11 +150,11 @@ async function handleMusicCommands(action, context, args = null, isSlash = false
                 return isSlash ? context.editReply(msg) : textChannel.send(msg);
             }
         } catch (err) {
+            console.error(err);
             return isSlash ? context.editReply('❌ গান চালাতে ব্যর্থ হয়েছে!') : context.reply('❌ গান চালাতে ব্যর্থ হয়েছে!');
         }
     }
 
-    // মিউজিক কন্ট্রোল কমান্ডস
     if (!serverQueue) return context.reply('❌ বর্তমানে কোনো গান চলছে না!');
 
     if (action === 'skip') {
@@ -190,7 +187,6 @@ async function handleMusicCommands(action, context, args = null, isSlash = false
     }
 }
 
-// ৬. প্রিফিক্স ইভেন্ট
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.content.startsWith(PREFIX)) return;
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
@@ -205,7 +201,6 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// ৭. স্ল্যাশ ইভেন্ট
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     const { commandName } = interaction;
