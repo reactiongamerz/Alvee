@@ -1,176 +1,243 @@
 const { 
     Client, 
     GatewayIntentBits, 
-    Partials, 
     REST, 
     Routes, 
-    EmbedBuilder, 
-    ActivityType 
+    SlashCommandBuilder, 
+    EmbedBuilder 
 } = require('discord.js');
-require('dotenv').config();
+const { 
+    joinVoiceChannel, 
+    createAudioPlayer, 
+    createAudioResource, 
+    AudioPlayerStatus, 
+    NoSubscriberBehavior 
+} = require('@discordjs/voice');
+const play = require('play-dl');
 
-// ১. ক্লায়েন্ট ইনিশিয়েলাইজেশন (সব প্রয়োজনীয় ইনটেন্টস সহ)
+// বটের টোকেন এবং ক্লায়েন্ট আইডি এখানে দিন
+const TOKEN = 'YOUR_BOT_TOKEN_HERE';
+const CLIENT_ID = 'YOUR_CLIENT_ID_HERE';
+const BOT_NAME = 'আল*ভী'; // বটের নাম ভ্যারিয়েবল হিসেবে সেট করা হলো
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildVoiceStates
-    ],
-    partials: [Partials.Channel, Partials.Message]
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildMessages
+    ]
 });
 
-// বটের ডিফল্ট প্রিফিক্স (লারা বটের মতো পরিবর্তনযোগ্য করার বেস)
-const PREFIX = '!'; 
+// সার্ভার ভিত্তিক মিউজিক কিউ (Queue) সংরক্ষণের জন্য Map
+const queue = new Map();
 
-// ২. স্লাশ কমান্ডের ডেটাবেস/লিস্ট তৈরি
-const commandsJSON = [
-    {
-        name: 'ping',
-        description: 'বটের লেটেন্সি বা পিং চেক করুন',
-    },
-    {
-        name: 'play',
-        description: 'যেকোনো গান প্লে করুন (লারা মিউজিক সিস্টেম)',
-        options: [
-            {
-                name: 'query',
-                type: 3, // STRING type
-                description: 'গানের নাম বা ইউটিউব লিংক',
-                required: true
-            }
-        ]
-    },
-    {
-        name: 'help',
-        description: 'বটের সব কমান্ডের তালিকা দেখুন',
-    }
+// slash commands রেজিস্টার করা
+const commands = [
+    new SlashCommandBuilder()
+        .setName('play')
+        .setDescription(`${BOT_NAME}-এর মাধ্যমে ইউটিউব লিঙ্ক বা গানের নাম দিয়ে গান বাজান`)
+        .addStringOption(option => 
+            option.setName('query')
+                .setDescription('ইউটিউব URL বা গানের নাম')
+                .setRequired(true)),
+    
+    new SlashCommandBuilder()
+        .setName('pause')
+        .setDescription('চলতি গানটি থামিয়ে রাখুন (Pause)'),
+        
+    new SlashCommandBuilder()
+        .setName('resume')
+        .setDescription('থামিয়ে রাখা গানটি আবার চালু করুন (Resume)'),
+        
+    new SlashCommandBuilder()
+        .setName('skip')
+        .setDescription('চলতি গানটি বাদ দিয়ে পরের গানে যান'),
+        
+    new SlashCommandBuilder()
+        .setName('queue')
+        .setDescription('বর্তমান গানের তালিকা দেখুন')
 ];
 
-// ৩. বটের রেডি ইভেন্ট (অনলাইন হওয়া এবং স্লাশ কমান্ড রেজিস্ট্রি)
-client.once('ready', async () => {
-    console.log(`Log in সফল হয়েছে! বট হিসেবে প্রস্তুত: ${client.user.tag}`);
-    
-    // বটের স্ট্যাটাস সেট করা (Lara Bot Style)
-    client.user.setActivity({
-        name: `${PREFIX}help | /help`,
-        type: ActivityType.Listening
-    });
+const rest = new REST({ version: '10' }).setToken(TOKEN);
 
-    // গ্লোবাল স্লাশ কমান্ড রেজিস্ট্রি করা
-    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+(async () => {
     try {
-        console.log('স্লাশ (/) কমান্ডগুলো রিফ্রেশ করা হচ্ছে...');
-        await rest.put(
-            Routes.applicationCommands(client.user.id),
-            { body: commandsJSON }
-        );
-        console.log('সফলভাবে সব স্লাশ (/) কমান্ড রেজিস্ট্রি হয়েছে!');
+        console.log(`${BOT_NAME} বটের Slash Commands (/) লোড করা হচ্ছে...`);
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+        console.log(`${BOT_NAME} বটের Slash Commands সফলভাবে রেজিস্টার হয়েছে!`);
     } catch (error) {
-        console.error('স্লাশ কমান্ড লোড করতে ভুল হয়েছে:', error);
+        console.error(error);
     }
+})();
+
+client.once('ready', () => {
+    console.log(`${BOT_NAME} হিসেবে বট এখন অনলাইন ও প্রস্তুত!`);
 });
 
-// ৪. প্রিফিক্স (!) কমান্ড হ্যান্ডলার
-client.on('messageCreate', async (message) => {
-    // বট নিজে মেসেজ দিলে বা প্রিফিক্স ছাড়া মেসেজ আসলে ইগনোর করবে
-    if (message.author.bot || !message.content.startsWith(PREFIX)) return;
-
-    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-    const commandName = args.shift().toLowerCase();
-
-    // পিং কমান্ড (!ping)
-    if (commandName === 'ping') {
-        const msg = await message.reply('পিং গণনা করা হচ্ছে...');
-        const latency = msg.createdTimestamp - message.createdTimestamp;
-        return msg.edit(`🏓 পং! বটের লেটেন্সি: **${latency}ms** | API লেটেন্সি: **${Math.round(client.ws.ping)}ms**`);
-    }
-
-    // প্লে কমান্ড (!play <গান>)
-    if (commandName === 'play') {
-        const query = args.join(' ');
-        if (!query) return message.reply(`❌ দয়া করে গানের নাম লিখুন! সঠিক ব্যবহার: \`${PREFIX}play [গানের নাম]\``);
-        
-        if (!message.member.voice.channel) {
-            return message.reply('❌ এই কমান্ডটি ব্যবহারের জন্য আপনাকে আগে একটি ভয়েস চ্যানেলে জয়েন করতে হবে!');
-        }
-
-        return message.reply(`🎵 **${query}** গানটি খোঁজা হচ্ছে এবং প্লে করার প্রস্তুতি নেওয়া হচ্ছে...`);
-    }
-
-    // হেল্প কমান্ড (!help)
-    if (commandName === 'help') {
-        const helpEmbed = new EmbedBuilder()
-            .setColor('#7289DA')
-            .setTitle('✨ Lara Bot - কমান্ড হেল্প লিস্ট')
-            .setDescription(`বটের বর্তমান প্রিফিক্স হলো: \`${PREFIX}\`\nআপনি নিচের কমান্ডগুলো প্রিফিক্স অথবা স্লাশ (\`/\`) দুটি দিয়েই ব্যবহার করতে পারবেন।`)
-            .addFields(
-                { name: `• ${PREFIX}ping / /ping`, value: 'বটের গতি বা রেসপন্স টাইম চেক করুন।' },
-                { name: `• ${PREFIX}play <গান> / /play`, value: 'ভয়েস চ্যানেলে হাই-কোয়ালিটি গান শুনুন।' },
-                { name: `• ${PREFIX}help / /help`, value: 'বটের সব কমান্ডের গাইডলাইন দেখুন।' }
-            )
-            .setFooter({ text: 'Lara Music System', iconURL: client.user.displayAvatarURL() })
-            .setTimestamp();
-
-        return message.reply({ embeds: [helpEmbed] });
-    }
-});
-
-// ৫. স্লাশ (/) কমান্ড হ্যান্ডলার
-client.on('interactionCreate', async (interaction) => {
+// ইন্টারঅ্যাকশন হ্যান্ডলার
+client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    const { commandName } = interaction;
+    const { commandName, guildId, member, options } = interaction;
+    const voiceChannel = member.voice.channel;
 
-    // স্লাশ পিং (/ping)
-    if (commandName === 'ping') {
-        const sent = await interaction.reply({ content: 'পিং গণনা করা হচ্ছে...', fetchReply: true });
-        const latency = sent.createdTimestamp - interaction.createdTimestamp;
-        return interaction.editReply(`🏓 পং! বটের লেটেন্সি: **${latency}ms** | API লেটেন্সি: **${Math.round(client.ws.ping)}ms**`);
+    // ভয়েস চ্যানেল চেক
+    if (!voiceChannel) {
+        return interaction.reply({ content: 'আপনাকে অবশ্যই একটি ভয়েস চ্যানেলে থাকতে হবে!', ephemeral: true });
     }
 
-    // স্লাশ প্লে (/play)
+    let serverQueue = queue.get(guildId);
+
     if (commandName === 'play') {
-        const query = interaction.options.getString('query');
-        
-        if (!interaction.member.voice.channel) {
-            return interaction.reply({ content: '❌ এই কমান্ডটি ব্যবহারের জন্য আপনাকে আগে একটি ভয়েস চ্যানেলে জয়েন করতে হবে!', ephemeral: true });
+        await interaction.deferReply();
+        const query = options.getString('query');
+        let songInfo = null;
+
+        try {
+            // লিঙ্ক নাকি সার্চ টার্ম তা চেক করা
+            if (play.yt_validate(query) === 'video') {
+                const info = await play.video_info(query);
+                songInfo = {
+                    title: info.video_details.title,
+                    url: info.video_details.url,
+                    duration: info.video_details.durationRaw
+                };
+            } else {
+                const searchResults = await play.search(query, { limit: 1 });
+                if (searchResults.length === 0) {
+                    return interaction.editReply('কোনো গান খুঁজে পাওয়া যায়নি!');
+                }
+                songInfo = {
+                    title: searchResults[0].title,
+                    url: searchResults[0].url,
+                    duration: searchResults[0].durationRaw
+                };
+            }
+
+            if (!serverQueue) {
+                const queueContruct = {
+                    textChannel: interaction.channel,
+                    voiceChannel: voiceChannel,
+                    connection: null,
+                    songs: [],
+                    player: null,
+                };
+
+                queue.set(guildId, queueContruct);
+                queueContruct.songs.push(songInfo);
+
+                try {
+                    const connection = joinVoiceChannel({
+                        channelId: voiceChannel.id,
+                        guildId: guildId,
+                        adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+                    });
+
+                    queueContruct.connection = connection;
+                    
+                    const player = createAudioPlayer({
+                        behaviors: { noSubscriber: NoSubscriberBehavior.Play }
+                    });
+                    queueContruct.player = player;
+                    connection.subscribe(player);
+
+                    playSong(guildId, queueContruct.songs);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#0099ff')
+                        .setTitle(`🎵 গান বাজাচ্ছে: ${BOT_NAME}`)
+                        .setDescription(`[${songInfo.title}](${songInfo.url}) [${songInfo.duration}]`)
+                        .setFooter({ text: `${BOT_NAME} Music System` });
+                    
+                    await interaction.editReply({ embeds: [embed] });
+
+                } catch (err) {
+                    console.log(err);
+                    queue.delete(guildId);
+                    return interaction.editReply('ভয়েস চ্যানেলে যুক্ত হতে সমস্যা হয়েছে!');
+                }
+            } else {
+                serverQueue.songs.push(songInfo);
+                const embed = new EmbedBuilder()
+                    .setColor('#00ff00')
+                    .setTitle('➕ কিউতে (Queue) যোগ করা হয়েছে')
+                    .setDescription(`[${songInfo.title}](${songInfo.url}) [${songInfo.duration}]`)
+                    .setFooter({ text: `${BOT_NAME} Music System` });
+                return interaction.editReply({ embeds: [embed] });
+            }
+
+        } catch (error) {
+            console.error(error);
+            return interaction.editReply('গানটি প্লে করার সময় একটি সমস্যা হয়েছে।');
         }
-
-        return interaction.reply(`🎵 **${query}** গানটি খোঁজা হচ্ছে এবং প্লে করার প্রস্তুতি নেওয়া হচ্ছে...`);
     }
 
-    // স্লাশ হেল্প (/help)
-    if (commandName === 'help') {
-        const helpEmbed = new EmbedBuilder()
-            .setColor('#7289DA')
-            .setTitle('✨ Lara Bot - কমান্ড হেল্প লিস্ট')
-            .setDescription(`বটের বর্তমান প্রিফিক্স হলো: \`${PREFIX}\`\nআপনি নিচের কমান্ডগুলো প্রিফিক্স অথবা স্লাশ (\`/\`) দুটি দিয়েই ব্যবহার করতে পারবেন।`)
-            .addFields(
-                { name: `• ${PREFIX}ping / /ping`, value: 'বটের গতি বা রেসপন্স টাইম চেক করুন।' },
-                { name: `• ${PREFIX}play <গান> / /play`, value: 'ভয়েস চ্যানেলে হাই-কোয়ালিটি গান শুনুন।' },
-                { name: `• ${PREFIX}help / /help`, value: 'বটের সব কমান্ডের গাইডলাইন দেখুন।' }
-            )
-            .setFooter({ text: 'Lara Music System', iconURL: client.user.displayAvatarURL() })
-            .setTimestamp();
+    if (commandName === 'pause') {
+        if (!serverQueue || !serverQueue.player) return interaction.reply('বর্তমানে কোনো গান চলছে না!');
+        serverQueue.player.pause();
+        return interaction.reply(`⏸️ ${BOT_NAME} গানটি সাময়িকভাবে থামিয়ে দিয়েছে।`);
+    }
 
-        return interaction.reply({ embeds: [helpEmbed] });
+    if (commandName === 'resume') {
+        if (!serverQueue || !serverQueue.player) return interaction.reply('বর্তমানে কোনো গান চলছে না!');
+        serverQueue.player.unpause();
+        return interaction.reply(`▶️ ${BOT_NAME} গানটি আবার চালু করেছে।`);
+    }
+
+    if (commandName === 'skip') {
+        if (!serverQueue) return interaction.reply('স্কিপ করার মতো কোনো গান নেই!');
+        serverQueue.player.stop();
+        return interaction.reply(`⏭️ ${BOT_NAME} গানটি স্কিপ করে পরের গানে চলে গেছে।`);
+    }
+
+    if (commandName === 'queue') {
+        if (!serverQueue || serverQueue.songs.length === 0) return interaction.reply('বর্তমানে কিউ একদম খালি!');
+        
+        let queueString = serverQueue.songs.map((song, index) => {
+            return `${index === 0 ? '▶️ **চলতি গান:**' : `${index}.`} [${song.title}](${song.url}) - \`${song.duration}\``;
+        }).join('\n');
+
+        const embed = new EmbedBuilder()
+            .setColor('#ffff00')
+            .setTitle(`🎼 ${BOT_NAME} - বর্তমান গানের তালিকা`)
+            .setDescription(queueString);
+
+        return interaction.reply({ embeds: [embed] });
     }
 });
 
-// ক্র্যাশ হ্যান্ডলিং (বট যেন কোনো ভুলের কারণে বন্ধ না হয়ে যায়)
-process.on('unhandledRejection', error => {
-    console.error('Unhandled promise rejection:', error);
-});
- // Render-এর পোর্ট সমস্যা সমাধানের জন্য ডামি ওয়েব সার্ভার
-const express = require('express');
-const app = express();
-const PORT = process.env.PORT || 3000;
+// গান প্লে করার মূল ফাংশন
+async function playSong(guildId, song) {
+    const serverQueue = queue.get(guildId);
+    if (!song || song.length === 0) {
+        setTimeout(() => {
+            if (serverQueue && serverQueue.songs.length === 0) {
+                serverQueue.connection.destroy();
+                queue.delete(guildId);
+            }
+        }, 30000); // গান শেষ হওয়ার ৩০ সেকেন্ড পর চ্যানেল লিভ করবে
+        return;
+    }
 
-app.get('/', (req, res) => {
-    res.send('Lara Bot is running 24/7!');
-});
+    try {
+        const currentSong = song[0];
+        const stream = await play.stream(currentSong.url);
+        const resource = createAudioResource(stream.stream, {
+            inputType: stream.type
+        });
 
-app.listen(PORT, () => {
-    console.log(`ডামি ওয়েব সার্ভার চালু হয়েছে পোর্ট: ${PORT}`);
-client.login(process.env.TOKEN);
+        serverQueue.player.play(resource);
+
+        serverQueue.player.once(AudioPlayerStatus.Idle, () => {
+            serverQueue.songs.shift();
+            playSong(guildId, serverQueue.songs);
+        });
+
+    } catch (error) {
+        console.error(error);
+        serverQueue.songs.shift();
+        playSong(guildId, serverQueue.songs);
+    }
+}
+
+client.login(TOKEN);
