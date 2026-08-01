@@ -173,6 +173,6 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`ডামি ওয়েব সার্ভার চালু হয়েছে পোর্ট: ${PORT}`);
-});
+});client.login(process.env.TOKEN);
 // ৬. বট লগইন (এনভায়রনমেন্ট ফাইল থেকে টোকেন রিড করবে)
 client.login(process.env.TOKEN);
