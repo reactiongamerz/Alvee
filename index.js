@@ -1,243 +1,167 @@
-const { 
-    Client, 
-    GatewayIntentBits, 
-    REST, 
-    Routes, 
-    SlashCommandBuilder, 
-    EmbedBuilder 
-} = require('discord.js');
-const { 
-    joinVoiceChannel, 
-    createAudioPlayer, 
-    createAudioResource, 
-    AudioPlayerStatus, 
-    NoSubscriberBehavior 
-} = require('@discordjs/voice');
+const { Client, GatewayIntentBits } = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection } = require('@discordjs/voice');
 const play = require('play-dl');
-
-// বটের টোকেন এবং ক্লায়েন্ট আইডি এখানে দিন
-const TOKEN = 'YOUR_BOT_TOKEN_HERE';
-const CLIENT_ID = 'YOUR_CLIENT_ID_HERE';
-const BOT_NAME = 'আল*ভী'; // বটের নাম ভ্যারিয়েবল হিসেবে সেট করা হলো
+require('dotenv').config();
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.GuildMessages
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildVoiceStates
     ]
 });
 
-// সার্ভার ভিত্তিক মিউজিক কিউ (Queue) সংরক্ষণের জন্য Map
-const queue = new Map();
-
-// slash commands রেজিস্টার করা
-const commands = [
-    new SlashCommandBuilder()
-        .setName('play')
-        .setDescription(`${BOT_NAME}-এর মাধ্যমে ইউটিউব লিঙ্ক বা গানের নাম দিয়ে গান বাজান`)
-        .addStringOption(option => 
-            option.setName('query')
-                .setDescription('ইউটিউব URL বা গানের নাম')
-                .setRequired(true)),
-    
-    new SlashCommandBuilder()
-        .setName('pause')
-        .setDescription('চলতি গানটি থামিয়ে রাখুন (Pause)'),
-        
-    new SlashCommandBuilder()
-        .setName('resume')
-        .setDescription('থামিয়ে রাখা গানটি আবার চালু করুন (Resume)'),
-        
-    new SlashCommandBuilder()
-        .setName('skip')
-        .setDescription('চলতি গানটি বাদ দিয়ে পরের গানে যান'),
-        
-    new SlashCommandBuilder()
-        .setName('queue')
-        .setDescription('বর্তমান গানের তালিকা দেখুন')
-];
-
-const rest = new REST({ version: '10' }).setToken(TOKEN);
-
-(async () => {
-    try {
-        console.log(`${BOT_NAME} বটের Slash Commands (/) লোড করা হচ্ছে...`);
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log(`${BOT_NAME} বটের Slash Commands সফলভাবে রেজিস্টার হয়েছে!`);
-    } catch (error) {
-        console.error(error);
-    }
-})();
+const PREFIX = '!'; 
+const queues = new Map(); // প্রতিটি সার্ভারের গানের সিরিয়াল (Queue) রাখার জন্য
 
 client.once('ready', () => {
-    console.log(`${BOT_NAME} হিসেবে বট এখন অনলাইন ও প্রস্তুত!`);
+    console.log(`✅ ${client.user.tag} হিসেবে লারা মিউজিক বট অনলাইন!`);
 });
 
-// ইন্টারঅ্যাকশন হ্যান্ডলার
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
-
-    const { commandName, guildId, member, options } = interaction;
-    const voiceChannel = member.voice.channel;
-
-    // ভয়েস চ্যানেল চেক
-    if (!voiceChannel) {
-        return interaction.reply({ content: 'আপনাকে অবশ্যই একটি ভয়েস চ্যানেলে থাকতে হবে!', ephemeral: true });
-    }
-
-    let serverQueue = queue.get(guildId);
-
-    if (commandName === 'play') {
-        await interaction.deferReply();
-        const query = options.getString('query');
-        let songInfo = null;
-
-        try {
-            // লিঙ্ক নাকি সার্চ টার্ম তা চেক করা
-            if (play.yt_validate(query) === 'video') {
-                const info = await play.video_info(query);
-                songInfo = {
-                    title: info.video_details.title,
-                    url: info.video_details.url,
-                    duration: info.video_details.durationRaw
-                };
-            } else {
-                const searchResults = await play.search(query, { limit: 1 });
-                if (searchResults.length === 0) {
-                    return interaction.editReply('কোনো গান খুঁজে পাওয়া যায়নি!');
-                }
-                songInfo = {
-                    title: searchResults[0].title,
-                    url: searchResults[0].url,
-                    duration: searchResults[0].durationRaw
-                };
-            }
-
-            if (!serverQueue) {
-                const queueContruct = {
-                    textChannel: interaction.channel,
-                    voiceChannel: voiceChannel,
-                    connection: null,
-                    songs: [],
-                    player: null,
-                };
-
-                queue.set(guildId, queueContruct);
-                queueContruct.songs.push(songInfo);
-
-                try {
-                    const connection = joinVoiceChannel({
-                        channelId: voiceChannel.id,
-                        guildId: guildId,
-                        adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-                    });
-
-                    queueContruct.connection = connection;
-                    
-                    const player = createAudioPlayer({
-                        behaviors: { noSubscriber: NoSubscriberBehavior.Play }
-                    });
-                    queueContruct.player = player;
-                    connection.subscribe(player);
-
-                    playSong(guildId, queueContruct.songs);
-                    
-                    const embed = new EmbedBuilder()
-                        .setColor('#0099ff')
-                        .setTitle(`🎵 গান বাজাচ্ছে: ${BOT_NAME}`)
-                        .setDescription(`[${songInfo.title}](${songInfo.url}) [${songInfo.duration}]`)
-                        .setFooter({ text: `${BOT_NAME} Music System` });
-                    
-                    await interaction.editReply({ embeds: [embed] });
-
-                } catch (err) {
-                    console.log(err);
-                    queue.delete(guildId);
-                    return interaction.editReply('ভয়েস চ্যানেলে যুক্ত হতে সমস্যা হয়েছে!');
-                }
-            } else {
-                serverQueue.songs.push(songInfo);
-                const embed = new EmbedBuilder()
-                    .setColor('#00ff00')
-                    .setTitle('➕ কিউতে (Queue) যোগ করা হয়েছে')
-                    .setDescription(`[${songInfo.title}](${songInfo.url}) [${songInfo.duration}]`)
-                    .setFooter({ text: `${BOT_NAME} Music System` });
-                return interaction.editReply({ embeds: [embed] });
-            }
-
-        } catch (error) {
-            console.error(error);
-            return interaction.editReply('গানটি প্লে করার সময় একটি সমস্যা হয়েছে।');
-        }
-    }
-
-    if (commandName === 'pause') {
-        if (!serverQueue || !serverQueue.player) return interaction.reply('বর্তমানে কোনো গান চলছে না!');
-        serverQueue.player.pause();
-        return interaction.reply(`⏸️ ${BOT_NAME} গানটি সাময়িকভাবে থামিয়ে দিয়েছে।`);
-    }
-
-    if (commandName === 'resume') {
-        if (!serverQueue || !serverQueue.player) return interaction.reply('বর্তমানে কোনো গান চলছে না!');
-        serverQueue.player.unpause();
-        return interaction.reply(`▶️ ${BOT_NAME} গানটি আবার চালু করেছে।`);
-    }
-
-    if (commandName === 'skip') {
-        if (!serverQueue) return interaction.reply('স্কিপ করার মতো কোনো গান নেই!');
-        serverQueue.player.stop();
-        return interaction.reply(`⏭️ ${BOT_NAME} গানটি স্কিপ করে পরের গানে চলে গেছে।`);
-    }
-
-    if (commandName === 'queue') {
-        if (!serverQueue || serverQueue.songs.length === 0) return interaction.reply('বর্তমানে কিউ একদম খালি!');
-        
-        let queueString = serverQueue.songs.map((song, index) => {
-            return `${index === 0 ? '▶️ **চলতি গান:**' : `${index}.`} [${song.title}](${song.url}) - \`${song.duration}\``;
-        }).join('\n');
-
-        const embed = new EmbedBuilder()
-            .setColor('#ffff00')
-            .setTitle(`🎼 ${BOT_NAME} - বর্তমান গানের তালিকা`)
-            .setDescription(queueString);
-
-        return interaction.reply({ embeds: [embed] });
-    }
-});
-
-// গান প্লে করার মূল ফাংশন
+// গান প্লে করার মেইন ফাংশন
 async function playSong(guildId, song) {
-    const serverQueue = queue.get(guildId);
-    if (!song || song.length === 0) {
-        setTimeout(() => {
-            if (serverQueue && serverQueue.songs.length === 0) {
-                serverQueue.connection.destroy();
-                queue.delete(guildId);
-            }
-        }, 30000); // গান শেষ হওয়ার ৩০ সেকেন্ড পর চ্যানেল লিভ করবে
+    const serverQueue = queues.get(guildId);
+    if (!song) {
+        serverQueue.connection.destroy();
+        queues.delete(guildId);
         return;
     }
 
     try {
-        const currentSong = song[0];
-        const stream = await play.stream(currentSong.url);
-        const resource = createAudioResource(stream.stream, {
-            inputType: stream.type
-        });
-
+        const stream = await play.stream(song.url);
+        const resource = createAudioResource(stream.stream, { inputType: stream.type });
+        
         serverQueue.player.play(resource);
-
-        serverQueue.player.once(AudioPlayerStatus.Idle, () => {
-            serverQueue.songs.shift();
-            playSong(guildId, serverQueue.songs);
-        });
-
+        serverQueue.textChannel.send(`🎶 এখন প্লে হচ্ছে: **${song.title}**`);
     } catch (error) {
         console.error(error);
+        serverQueue.textChannel.send('❌ গানটি প্লে করতে সমস্যা হচ্ছে, পরবর্তী গানে যাওয়া হচ্ছে।');
         serverQueue.songs.shift();
-        playSong(guildId, serverQueue.songs);
+        playSong(guildId, serverQueue.songs[0]);
     }
 }
 
-client.login(TOKEN);
+client.on('messageCreate', async (message) => {
+    if (message.author.bot || !message.content.startsWith(PREFIX)) return;
+
+    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
+    const serverQueue = queues.get(message.guild.id);
+
+    // ১. !play <গান> (গান প্লে এবং কিউতে যোগ করা)
+    if (command === 'play') {
+        const voiceChannel = message.member.voice.channel;
+        if (!voiceChannel) return message.reply('❌ আগে ভয়েস চ্যানেলে জয়েন করুন!');
+
+        const songName = args.join(' ');
+        if (!songName) return message.reply('❌ গানের নাম বা লিংক দিন। যেমন: `!play fariha` ');
+
+        await message.channel.send(`🔍 **"${songName}"** খোঁজা হচ্ছে...`);
+
+        try {
+            const yt_info = await play.search(songName, { limit: 1 });
+            if (!yt_info.length) return message.reply('❌ গান পাওয়া যায়নি!');
+
+            const song = { title: yt_info[0].title, url: yt_info[0].url };
+
+            if (!serverQueue) {
+                const queueContruct = {
+                    textChannel: message.channel,
+                    voiceChannel: voiceChannel,
+                    connection: null,
+                    player: createAudioPlayer(),
+                    songs: [],
+                    loop: false
+                };
+
+                queues.set(message.guild.id, queueContruct);
+                queueContruct.songs.push(song);
+
+                const connection = joinVoiceChannel({
+                    channelId: voiceChannel.id,
+                    guildId: message.guild.id,
+                    adapterCreator: message.guild.voiceAdapterCreator,
+                });
+
+                queueContruct.connection = connection;
+                connection.subscribe(queueContruct.player);
+
+                playSong(message.guild.id, queueContruct.songs[0]);
+
+                queueContruct.player.on(AudioPlayerStatus.Idle, () => {
+                    if (queueContruct.loop) {
+                        // লুপ অন থাকলে একই গান আবার চলবে
+                        playSong(message.guild.id, queueContruct.songs[0]);
+                    } else {
+                        // লুপ অফ থাকলে পরের গান চলবে
+                        queueContruct.songs.shift();
+                        playSong(message.guild.id, queueContruct.songs[0]);
+                    }
+                });
+
+            } else {
+                serverQueue.songs.push(song);
+                return message.channel.send(`✅ **${song.title}** গানটি সিরিয়ালে (Queue) যোগ করা হয়েছে!`);
+            }
+        } catch (err) {
+            console.log(err);
+            return message.reply('❌ গানটি লোড করতে সমস্যা হয়েছে!');
+        }
+    }
+
+    // ২. !skip (চলতি গান বাদ দিয়ে পরের গানে যাওয়া)
+    if (command === 'skip') {
+        if (!message.member.voice.channel) return message.reply('❌ আপনাকে ভয়েস চ্যানেলে থাকতে হবে!');
+        if (!serverQueue || serverQueue.songs.length <= 1) return message.reply('❌ সিরিয়ালে আর কোনো গান নেই যা স্কিপ করা যাবে!');
+        
+        serverQueue.player.stop();
+        return message.reply('⏭️ গানটি স্কিপ করা হয়েছে!');
+    }
+
+    // ৩. !stop (সব গান বন্ধ করে বট লিভ করবে)
+    if (command === 'stop') {
+        if (!message.member.voice.channel) return message.reply('❌ আপনাকে ভয়েস চ্যানেলে থাকতে হবে!');
+        if (!serverQueue) return message.reply('❌ কোনো গান চলছে না!');
+        
+        serverQueue.songs = [];
+        serverQueue.player.stop();
+        serverQueue.connection.destroy();
+        queues.delete(message.guild.id);
+        return message.reply('🛑 সব গান বন্ধ করা হয়েছে এবং বট চ্যানেল থেকে বিদায় নিয়েছে!');
+    }
+
+    // ৪. !queue (সিরিয়ালে থাকা সব গানের লিস্ট দেখা)
+    if (command === 'queue') {
+        if (!serverQueue || !serverQueue.songs.length) return message.reply('❌ সিরিয়ালে বর্তমানে কোনো গান নেই!');
+        
+        let queueList = `🎵 **চলতি গানের তালিকা:**\n`;
+        serverQueue.songs.forEach((song, index) => {
+            queueList += `${index === 0 ? '▶️ এখন চলছে' : `${index}.`} - **${song.title}**\n`;
+        });
+        return message.channel.send(queueList);
+    }
+
+    // ৫. !pause (গান সাময়িক বন্ধ করা)
+    if (command === 'pause') {
+        if (!serverQueue) return message.reply('❌ কোনো গান চলছে না!');
+        serverQueue.player.pause();
+        return message.reply('⏸️ গানটি পজ (Pause) করা হয়েছে।');
+    }
+
+    // ৬. !resume (পজ করা গান আবার চালু করা)
+    if (command === 'resume') {
+        if (!serverQueue) return message.reply('❌ কোনো গান চলছে না!');
+        serverQueue.player.unpause();
+        return message.reply('▶️ গানটি আবার চালু করা হয়েছে।');
+    }
+
+    // ৭. !loop (একই গান বারবার চালানো অন/অফ করা)
+    if (command === 'loop') {
+        if (!serverQueue) return message.reply('❌ কোনো গান চলছে না!');
+        serverQueue.loop = !serverQueue.loop;
+        return message.reply(`🔄 লুপ মোড এখন **${serverQueue.loop ? 'চালু (ON)' : 'বন্ধ (OFF)'}** করা হয়েছে!`);
+    }
+});
+
+client.login(process.env.DISCORD_TOKEN);
