@@ -1,21 +1,22 @@
+// ১. রেন্ডার হোস্টিংয়ের পোর্ট এরর ফিক্স করার জন্য এক্সপ্রেস সার্ভার
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-  res.send('✅ লারা মিউজিক বট সফলভাবে রান করছে!');
+  res.send('✅ লারা মিউজিক বট ২৪ ঘন্টা সফলভাবে রান করছে!');
 });
 
 app.listen(port, () => {
   console.log(`Web server is running on port ${port}`);
 });
 
-// এর নিচ থেকে আপনার বটের বাকি কোড (Client, play-dl ইত্যাদি) শুরু হবে... { Client, GatewayIntentBits } = require('discord.js');
+// ২. বটের মূল মডিউলগুলো ইমপোর্ট করা
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const play = require('play-dl');
 require('dotenv').config();
 
-// বটের ইন্টেন্ট বা পারমিশন সেটআপ
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -25,83 +26,220 @@ const client = new Client({
     ]
 });
 
-const PREFIX = '!'; // বটের প্রিফিক্স
+const PREFIX = '!';
+const TOKEN = process.env.DISCORD_TOKEN;
+const queues = new Map(); // প্রতিটি সার্ভারের গান জমানোর জন্য কিউ ম্যাপ
 
-client.once('ready', () => {
-    console.log(`✅ ${client.user.tag} হিসেবে বট অনলাইন হয়েছে!`);
+// ৩. স্ল্যাশ কমান্ডগুলো রেজিস্টার করার জন্য তালিকা
+const commands = [
+    new SlashCommandBuilder()
+        .setName('play')
+        .setDescription('ইউটিউব থেকে গান প্লে করুন')
+        .addStringOption(option => option.setName('song').setDescription('গানের নাম বা লিংক').setRequired(true)),
+    new SlashCommandBuilder().setName('skip').setDescription('চলতি গানটি স্কিপ করুন'),
+    new SlashCommandBuilder().setName('stop').setDescription('সব গান বন্ধ করে বট লিভ করান'),
+    new SlashCommandBuilder().setName('queue').setDescription('গানের সিরিয়াল বা তালিকা দেখুন'),
+    new SlashCommandBuilder().setName('pause').setDescription('গান সাময়িক থামিয়ে রাখুন'),
+    new SlashCommandBuilder().setName('resume').setDescription('থামানো গান আবার চালু করুন'),
+    new SlashCommandBuilder().setName('loop').setDescription('একই গান বারবার বাজানো অন/অফ করুন'),
+    new SlashCommandBuilder().setName('ping').setDescription('বটের লেটেন্সি চেক করুন')
+].map(command => command.toJSON());
+
+client.once('ready', async () => {
+    console.log(`✅ ${client.user.tag} হিসেবে লারা মিউজিক বট অনলাইন!`);
+    
+    const rest = new REST({ version: '10' }).setToken(TOKEN);
+    try {
+        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+        console.log('Successfully registered Lara bot application commands.');
+    } catch (error) {
+        console.error(error);
+    }
 });
 
+// ৪. গান প্লে করার মেইন ফাংশন (Queue ও Loop হ্যান্ডেলার)
+async function playSong(guildId, song) {
+    const serverQueue = queues.get(guildId);
+    if (!song) {
+        serverQueue.connection.destroy();
+        queues.delete(guildId);
+        return;
+    }
+
+    try {
+        const stream = await play.stream(song.url);
+        const resource = createAudioResource(stream.stream, { inputType: stream.type });
+        
+        serverQueue.player.play(resource);
+        
+        // লারা বটের মতো সুন্দর মেসেজ বক্স (Embed)
+        const embed = new EmbedBuilder()
+            .setColor('#00ffcc')
+            .setDescription(`🎶 এখন প্লে হচ্ছে: **[${song.title}](${song.url})**`);
+        
+        serverQueue.textChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error(error);
+        serverQueue.textChannel.send('❌ গানটি প্লে করতে সমস্যা হয়েছে, পরবর্তী গানে যাওয়া হচ্ছে।');
+        serverQueue.songs.shift();
+        playSong(guildId, serverQueue.songs[0]);
+    }
+}
+
+// ৫. কমন কমান্ড প্রসেসর (যা প্রিফিক্স এবং স্ল্যাশ দুই জায়গাতেই কাজ করবে)
+async function handleMusicCommands(action, context, args = null, isSlash = false) {
+    const guildId = context.guild.id;
+    const member = context.member;
+    const voiceChannel = member.voice.channel;
+    const textChannel = isSlash ? context.channel : context.channel;
+    let serverQueue = queues.get(guildId);
+
+    if (action === 'ping') {
+        const replyText = `🏓 পং! বটের লেটেন্সি: ${Date.now() - context.createdTimestamp}ms`;
+        return isSlash ? context.reply(replyText) : context.reply(replyText);
+    }
+
+    // গান সংক্রান্ত সব কমান্ডের জন্য আগে ভয়েস চ্যানেলে থাকা জরুরি
+    if (!voiceChannel) {
+        const msg = '❌ আগে আপনাকে একটি ভয়েס চ্যানেলে জয়েন করতে হবে!';
+        return isSlash ? context.reply({ content: msg, ephemeral: true }) : context.reply(msg);
+    }
+
+    if (action === 'play') {
+        const songName = args;
+        if (isSlash) await context.deferReply();
+        else await textChannel.send(`🔍 **"${songName}"** খোঁজা হচ্ছে...`);
+
+        try {
+            const yt_info = await play.search(songName, { limit: 1 });
+            if (!yt_info.length) {
+                return isSlash ? context.editReply('❌ কোনো গান খুঁজে পাওয়া যায়নি!') : context.reply('❌ কোনো গান খুঁজে পাওয়া যায়নি!');
+            }
+
+            const song = { title: yt_info[0].title, url: yt_info[0].url };
+
+            if (!serverQueue) {
+                const queueConstruct = {
+                    textChannel: textChannel,
+                    voiceChannel: voiceChannel,
+                    connection: null,
+                    player: createAudioPlayer(),
+                    songs: [],
+                    loop: false
+                };
+
+                queues.set(guildId, queueConstruct);
+                queueConstruct.songs.push(song);
+
+                const connection = joinVoiceChannel({
+                    channelId: voiceChannel.id,
+                    guildId: guildId,
+                    adapterCreator: context.guild.voiceAdapterCreator,
+                });
+
+                queueConstruct.connection = connection;
+                connection.subscribe(queueConstruct.player);
+
+                if (isSlash) await context.editReply(`✅ **${song.title}** গানটি খোঁজা সফল হয়েছে!`);
+                
+                playSong(guildId, queueConstruct.songs[0]);
+
+                queueConstruct.player.on(AudioPlayerStatus.Idle, () => {
+                    if (queueConstruct.loop) {
+                        playSong(guildId, queueConstruct.songs[0]);
+                    } else {
+                        queueConstruct.songs.shift();
+                        playSong(guildId, queueConstruct.songs[0]);
+                    }
+                });
+
+            } else {
+                serverQueue.songs.push(song);
+                const msg = `✅ **${song.title}** গানটি সিরিয়ালে (Queue) যোগ করা হয়েছে!`;
+                return isSlash ? context.editReply(msg) : textChannel.send(msg);
+            }
+        } catch (err) {
+            console.error(err);
+            return isSlash ? context.editReply('❌ গান লোড করতে সমস্যা হয়েছে!') : context.reply('❌ গান লোড করতে সমস্যা হয়েছে!');
+        }
+    }
+
+    // বাকি অন্যান্য মিউজিক কন্ট্রোল কমান্ড
+    if (!serverQueue) {
+        const msg = '❌ বর্তমানে সার্ভারে কোনো গান চলছে না!';
+        return isSlash ? context.reply(msg) : context.reply(msg);
+    }
+
+    if (action === 'skip') {
+        serverQueue.player.stop();
+        const msg = '⏭️ চলতি গানটি স্কিপ করা হয়েছে!';
+        return isSlash ? context.reply(msg) : context.reply(msg);
+    }
+
+    if (action === 'stop') {
+        serverQueue.songs = [];
+        serverQueue.player.stop();
+        serverQueue.connection.destroy();
+        queues.delete(guildId);
+        const msg = '🛑 সব গান বন্ধ করা হয়েছে এবং বট চ্যানেল লিভ করেছে!';
+        return isSlash ? context.reply(msg) : context.reply(msg);
+    }
+
+    if (action === 'pause') {
+        serverQueue.player.pause();
+        const msg = '⏸️ গানটি পজ (Pause) করা হয়েছে।';
+        return isSlash ? context.reply(msg) : context.reply(msg);
+    }
+
+    if (action === 'resume') {
+        serverQueue.player.unpause();
+        const msg = '▶️ গানটি আবার চালু করা হয়েছে।';
+        return isSlash ? context.reply(msg) : context.reply(msg);
+    }
+
+    if (action === 'loop') {
+        serverQueue.loop = !serverQueue.loop;
+        const msg = `🔄 লুপ মোড এখন **${serverQueue.loop ? 'চালু (ON)' : 'বন্ধ (OFF)'}** করা হয়েছে!`;
+        return isSlash ? context.reply(msg) : context.reply(msg);
+    }
+
+    if (action === 'queue') {
+        let queueList = `🎵 **চলতি গানের তালিকা:**\n`;
+        serverQueue.songs.forEach((song, index) => {
+            queueList += `${index === 0 ? '▶️ এখন চলছে' : `${index}.`} - **${song.title}**\n`;
+        });
+        return isSlash ? context.reply(queueList) : context.reply(queueList);
+    }
+}
+
+// ৬. প্রিফিক্স (!) ইভেন্ট হ্যান্ডলার
 client.on('messageCreate', async (message) => {
-    // মেসেজটি বট থেকে আসলে বা প্রিফিক্স না থাকলে স্কিপ করবে
     if (message.author.bot || !message.content.startsWith(PREFIX)) return;
 
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // ১. প্লে কমান্ড (!play <গানের নাম বা লিংক>)
-    if (command === 'play') {
-        const voiceChannel = message.member.voice.channel;
-        if (!voiceChannel) {
-            return message.reply('❌ গান শোনার জন্য আগে আপনাকে একটি ভয়েস চ্যানেলে জয়েন করতে হবে!');
-        }
-
+    if (command === 'play' || command === 'p') {
         const songName = args.join(' ');
-        if (!songName) {
-            return message.reply('❌ দয়া করে গানের নাম বা ইউটিউব লিংক দিন। যেমন: `!play fariha` ');
-        }
-
-        await message.channel.send(`🔍 **"${songName}"** গানটি খোঁজা হচ্ছে...`);
-
-        try {
-            // ইউটিউব থেকে গান সার্চ করা
-            const yt_info = await play.search(songName, { limit: 1 });
-            if (!yt_info.length) return message.reply('❌ কোনো গান খুঁজে পাওয়া যায়নি!');
-
-            const stream = await play.stream(yt_info[0].url);
-            
-            // ভয়েস চ্যানেলে কানেক্ট করা
-            const connection = joinVoiceChannel({
-                channelId: voiceChannel.id,
-                guildId: message.guild.id,
-                adapterCreator: message.guild.voiceAdapterCreator,
-            });
-
-            // অডিও প্লেয়ার তৈরি ও প্লে করা
-            const player = createAudioPlayer();
-            const resource = createAudioResource(stream.stream, { inputType: stream.type });
-
-            player.play(resource);
-            connection.subscribe(player);
-
-            await message.channel.send(`🎶 এখন প্লে হচ্ছে: **${yt_info[0].title}**`);
-
-            // গান শেষ হলে চ্যানেল ধরে রাখা বা লিভ করা
-            player.on(AudioPlayerStatus.Idle, () => {
-                connection.destroy();
-            });
-
-        } catch (error) {
-            console.error(error);
-            message.reply('❌ গানটি প্লে করার সময় একটি সমস্যা হয়েছে!');
-        }
-    }
-
-    // ২. স্টপ কমান্ড (!stop)
-    if (command === 'stop') {
-        const voiceChannel = message.member.voice.channel;
-        if (!voiceChannel) return message.reply('❌ আপনাকে ভয়েস চ্যানেলে থাকতে হবে!');
-        
-        const { getVoiceConnection } = require('@discordjs/voice');
-        const connection = getVoiceConnection(message.guild.id);
-
-        if (connection) {
-            connection.destroy();
-            return message.reply('🛑 গান বন্ধ করা হয়েছে এবং বট চ্যানেল থেকে বিদায় নিয়েছে!');
-        } else {
-            return message.reply('❌ বট এখন কোনো ভয়েস চ্যানেলে নেই!');
-        }
+        if (!songName) return message.reply('❌ গানের নাম দিন। যেমন: `!play fariha` ');
+        await handleMusicCommands('play', message, songName, false);
+    } else if (['skip', 'stop', 'pause', 'resume', 'loop', 'queue', 'ping'].includes(command)) {
+        await handleMusicCommands(command, message, null, false);
     }
 });
 
-// আপনার বটের টোকেন দিয়ে লগইন করা
-client.login(process.env.DISCORD_TOKEN);
+// ७. স্ল্যাশ (/) ইভেন্ট হ্যান্ডলার
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+
+    const { commandName } = interaction;
+
+    if (commandName === 'play') {
+        const songName = interaction.options.getString('song');
+        await handleMusicCommands('play', interaction, songName, true);
+    } else {
+        await handleMusicCommands(commandName, interaction, null, true);
+    }
+});
+
+client.login(TOKEN);
