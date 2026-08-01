@@ -162,6 +162,17 @@ client.on('interactionCreate', async (interaction) => {
 process.on('unhandledRejection', error => {
     console.error('Unhandled promise rejection:', error);
 });
+ // Render-এর পোর্ট সমস্যা সমাধানের জন্য ডামি ওয়েব সার্ভার
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
 
+app.get('/', (req, res) => {
+    res.send('Lara Bot is running 24/7!');
+});
+
+app.listen(PORT, () => {
+    console.log(`ডামি ওয়েব সার্ভার চালু হয়েছে পোর্ট: ${PORT}`);
+});
 // ৬. বট লগইন (এনভায়রনমেন্ট ফাইল থেকে টোকেন রিড করবে)
 client.login(process.env.TOKEN);
